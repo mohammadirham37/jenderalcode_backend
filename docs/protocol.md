@@ -5,7 +5,9 @@ Dokumen kanon untuk tiga implementasi: desktop (Rust, repo ini), relay
 Salinan di proyek lain harus identik; perubahan dimulai di sini dan menaikkan
 versi bila tidak kompatibel.
 
-Dokumen ini publik: jangan menulis host, domain, client ID, atau rahasia.
+Dokumen ini publik: jangan menulis IP, host SSH, client ID, atau rahasia.
+Relay resmi: `https://backendcode.jenderalcorp.com`. Desktop dan mobile memakai
+alamat ini secara tetap (tidak bisa diubah user).
 
 ## 0. Prinsip
 
@@ -185,13 +187,13 @@ diabaikan.
 - Event (desktop → mobile): `{"t":"event","name":"...","data":{...}}`
 
 Kode galat aplikasi: `bad_request`, `not_found`, `remote_disabled`,
-`yolo_blocked`, `busy`, `internal`.
+`yolo_blocked`, `not_allowed`, `busy`, `internal`.
 
 ### 6.2 Method
 
 | Method | Params | Result |
 |---|---|---|
-| `hello` | `{app_version}` | `{desktop_version, desktop_name}` |
+| `hello` | `{app_version}` | `{desktop_version, desktop_name, capabilities:Capabilities}` |
 | `workspaces.list` | `{}` | `{workspaces:[Workspace]}` |
 | `sessions.list` | `{workspace_id}` | `{sessions:[Session]}` |
 | `session.new` | `{workspace_id}` | `{session:Session}` |
@@ -204,7 +206,10 @@ Kode galat aplikasi: `bad_request`, `not_found`, `remote_disabled`,
 | `approval.decide` | `{approval_id, approved:bool}` | `{}`. Hanya sekali, tanpa grant. |
 
 `chat.send`/`chat.steer` ke sesi yang mode izin efektifnya `yolo` (full
-access) ditolak dengan `yolo_blocked`: ubah mode di desktop dulu.
+access) ditolak dengan `yolo_blocked`, **kecuali** `capabilities.full_access`
+bernilai `true` (§6.5).
+
+Method tambahan untuk mode izin dan terminal ada di §6.5.
 
 ### 6.3 Event
 
@@ -219,6 +224,10 @@ Hanya untuk sesi yang di-subscribe (koneksi baru mulai tanpa subscribe).
 | `approval` | `{session_id, approval:Approval}` |
 | `usage` | `{session_id, input_tokens, output_tokens, cost_estimate:number\|null}` |
 | `error` | `{session_id, error}` |
+| `capabilities` | `Capabilities`. Dikirim ke semua ponsel online saat user mengubah pengaturan di desktop. |
+| `terminal.data` | `{terminal_id, data}`. Output terminal yang di-attach (teks UTF-8, digabung ~50 ms, ≤ 64 KiB per event). |
+| `terminal.exit` | `{terminal_id, code:int\|null}` |
+| `terminal.resized` | `{terminal_id, cols, rows}`. Ukuran terminal desktop berubah. |
 
 ### 6.4 Tipe
 
@@ -237,11 +246,135 @@ ToolRun   = {id, session_id, message_id?, tool_name,
              args:object, result_summary?, error?, approval_id?, created_at, finished_at?}
 Approval  = {id, session_id, tool_run_id, kind, description, preview?,
              status:"pending"|"approved"|"denied", created_at, decided_at?}
+Capabilities = {full_access:bool, terminal:bool, edit:bool}
+Terminal  = {id, title, kind:"shell"|"agent", origin:"desktop"|"remote",
+             workspace_id:string|null, cols, rows, bypass:bool}
+             (bypass: agent CLI berjalan dengan flag bypass permissions)
+Agent     = {id, name, mode:"plan"|"build"|"review"|"custom", policy_mode, built_in}
+Provider  = {id, name, kind}
+Model     = {id, provider_id, name, display_name,
+             capabilities:{vision?:bool, context_window?:int, ...}}
+SessionUsage = {total_input, total_output, total_cost:number|null, requests,
+             last_input, last_output}
+Checkpoint = {id, session_id, rel_path, existed, is_dir, created_at}
+FileEntry = {path, name, is_dir, size?}
+FileStatus = {path, index:StatusKind, worktree:StatusKind}
+StatusKind = "unmodified"|"modified"|"added"|"deleted"|"renamed"|"copied"|"untracked"|"ignored"|"other"
+Commit    = {hash, short_hash, subject, author, timestamp}   (timestamp: detik Unix)
 ```
 
 Konten pesan user bisa diawali penanda internal desktop (ringkasan compaction,
 lampiran `--- Attached files ---`, catatan jeda). Mobile boleh menampilkannya
 apa adanya di v1.
+
+### 6.5 Full access dan terminal (opsional, izin dari desktop)
+
+Desktop punya pengaturan **Allow Full access & terminal from phone**
+(`remote_allow_full_access`, default mati). Nilainya dilaporkan sebagai
+`capabilities` (`full_access`, `terminal` dan `edit` semuanya mengikuti pengaturan itu)
+di `hello` dan lewat event `capabilities`. Bila mati, semua method di bawah
+(kecuali `session.set_policy` ke `safe`/`balanced`) ditolak dengan
+`not_allowed`. Mematikannya juga melepas semua attach terminal dan menutup
+terminal yang dibuka dari ponsel.
+
+| Method | Params | Result |
+|---|---|---|
+| `session.set_policy` | `{session_id, mode:"safe"\|"balanced"\|"yolo"}` | `{session:Session}`. `yolo` butuh `full_access`. Ponsel wajib meminta konfirmasi user sebelum mengirim `yolo`. |
+| `terminal.list` | `{}` | `{terminals:[Terminal]}`. Terminal yang sedang berjalan: tab terminal dan agent CLI di desktop (`origin:"desktop"`) dan yang dibuka dari ponsel (`origin:"remote"`). |
+| `terminal.open` | `{workspace_id, cols, rows}` | `{terminal:Terminal}`. Shell baru di folder proyek (`origin:"remote"`, maks. 6 per desktop, termasuk sesi agent CLI §6.9). Tidak tampil sebagai tab di desktop. |
+| `terminal.attach` | `{terminal_id}` | `{terminal:Terminal, scrollback:string}`. Output terakhir (≤ 128 KiB), lalu event `terminal.data`/`terminal.exit`/`terminal.resized` mulai dikirim. |
+| `terminal.detach` | `{terminal_id}` | `{}` |
+| `terminal.input` | `{terminal_id, data}` | `{}`. Teks yang diketik (≤ 64 KiB), termasuk escape sequence tombol. |
+| `terminal.resize` | `{terminal_id, cols, rows}` | `{}`. Hanya `origin:"remote"`; tab desktop → `not_allowed` (ponsel menampilkan ukuran desktop). |
+| `terminal.close` | `{terminal_id}` | `{}`. Hanya `origin:"remote"`. |
+
+`terminal.attach` boleh diulang (idempoten). Desktop mendaftarkan attach dulu,
+baru mengambil `scrollback`; event `terminal.data` yang tiba di ponsel sebelum
+response attach boleh dibuang karena isinya sudah ada di `scrollback`.
+
+Koneksi baru mulai tanpa attach. Saat ponsel offline, attach-nya dilepas,
+tetapi terminal `origin:"remote"` tetap berjalan sampai ditutup atau desktop
+keluar, sehingga bisa di-attach lagi.
+
+### 6.6 Chat lengkap (seperti Chat layout desktop)
+
+| Method | Params | Result |
+|---|---|---|
+| `agents.list` | `{}` | `{agents:[Agent]}` |
+| `models.list` | `{}` | `{providers:[Provider], models:[Model]}`. Hanya provider yang aktif. |
+| `session.set_agent` | `{session_id, agent_profile_id}` | `{session:Session}` |
+| `session.set_model` | `{session_id, provider_id, model_name}` | `{session:Session}` |
+| `session.rename` | `{session_id, title}` | `{session:Session}` (judul 1–200 karakter) |
+| `session.delete` | `{session_id}` | `{}` |
+| `session.usage` | `{session_id}` | `SessionUsage` |
+| `skills.list` | `{workspace_id}` | `{skills:[{name, description, project:bool}]}`. Untuk menu `/`; kirim `/nama permintaan` lewat `chat.send`. |
+| `fs.find` | `{workspace_id, query}` | `{paths:[string]}` (maks. 30). Untuk `@` mention. |
+| `checkpoints.list` | `{session_id}` | `{checkpoints:[Checkpoint]}` |
+| `checkpoints.restore` | `{session_id}` | `{restored:int}`. Butuh `edit`. |
+
+`chat.send` menerima field tambahan opsional: `attachments:[path]` (path relatif
+dari `fs.find`, maks. 20) dan `images:[{mime, data}]` (base64 tanpa prefix
+`data:`, png/jpeg/gif/webp, sisi terpanjang ≤ 1568 px, maks. 4, total ≤ 6 MB
+sebelum enkripsi). Aturan vision dan ukuran sama dengan desktop. Pesan dengan
+lampiran tidak bisa dipakai untuk `chat.steer`.
+
+### 6.7 Files dan Editor
+
+Path selalu relatif terhadap root proyek; desktop menolak path yang keluar dari
+proyek atau melewati symlink, dan file sensitif (mis. `.env`) tidak bisa
+dibaca.
+
+| Method | Params | Result |
+|---|---|---|
+| `fs.list` | `{workspace_id, path, show_hidden?:bool}` | `{entries:[FileEntry]}`. `path:""` = root. |
+| `fs.read` | `{workspace_id, path}` | `{path, content, size}`. File > 1 MiB atau biner → `bad_request`. |
+| `fs.write` | `{workspace_id, path, content}` | `{}`. Butuh `edit`. Konten ≤ 1 MiB. |
+| `fs.create` | `{workspace_id, path, is_dir:bool}` | `{}`. Butuh `edit`. |
+| `fs.delete` | `{workspace_id, path}` | `{}`. Butuh `edit`. |
+| `fs.rename` | `{workspace_id, from, to}` | `{}`. Butuh `edit`. |
+
+### 6.8 Changes dan Git
+
+Semua method git memakai repo di root proyek; bukan repo → `bad_request`.
+
+| Method | Params | Result |
+|---|---|---|
+| `git.status` | `{workspace_id}` | `{branch:string\|null, files:[FileStatus]}` |
+| `git.diff` | `{workspace_id, path?, staged?:bool}` | `{diff}`. Unified diff (≤ 1 MiB, dipotong bila lebih). |
+| `git.diff_head` | `{workspace_id, path?}` | `{diff}`. Semua perubahan terhadap HEAD (panel Changes). |
+| `git.log` | `{workspace_id, limit?}` | `{commits:[Commit]}` (default 20, maks. 100) |
+| `git.branches` | `{workspace_id}` | `{branches:[{name, current}]}` |
+| `git.stage` | `{workspace_id, paths:[string]}` | `{}`. Butuh `edit`. |
+| `git.unstage` | `{workspace_id, paths:[string]}` | `{}`. Butuh `edit`. |
+| `git.discard` | `{workspace_id, path}` | `{}`. Butuh `edit`. Mengembalikan file ter-track ke versi index (`git checkout -- path`); file untracked tidak disentuh. Ponsel wajib minta konfirmasi. |
+| `git.commit` | `{workspace_id, message}` | `{hash}`. Butuh `edit`. |
+| `git.checkout` | `{workspace_id, name}` | `{}`. Butuh `edit`. |
+| `git.create_branch` | `{workspace_id, name}` | `{}`. Butuh `edit`. Membuat branch dan langsung pindah ke sana (`checkout -b`). |
+
+Push/pull tidak tersedia dari ponsel (sama seperti desktop: operasi git remote
+selalu lewat terminal).
+
+### 6.9 Agent CLI (Claude Code, Codex, OpenCode, Antigravity, …)
+
+Preset agent CLI diambil dari pengaturan desktop (Settings → Agent CLIs), sama
+dengan menu "+" di tab tengah desktop. Sesi agent CLI adalah terminal yang
+menjalankan perintah CLI di folder proyek, jadi `agent_clis.open` butuh
+`capabilities.terminal`. Terminal ini `origin:"remote"`, `kind:"agent"`, dipakai
+lewat method `terminal.*` (§6.5), dan ikut batas terminal dari ponsel (maks. 6).
+
+| Method | Params | Result |
+|---|---|---|
+| `agent_clis.list` | `{}` | `{clis:[AgentCliInfo]}`. Hanya preset yang aktif. |
+| `agent_clis.open` | `{workspace_id, cli_id, bypass?:bool, resume?:bool, cols, rows}` | `{terminal:Terminal}`. Perintahnya `<command> [<resume_args>] [<bypass_args>]`. `bypass` hanya bila preset punya `bypass_args`; `resume` hanya bila punya `resume_args`. Ponsel wajib meminta konfirmasi sebelum `bypass`. |
+| `agent_clis.usage` | `{}` | `{reports:[AgentUsageReport]}`. Usage langganan agent CLI (sama dengan tombol Gauge di desktop). Hanya baca; tidak butuh capability. Bisa butuh beberapa detik. |
+
+```
+AgentCliInfo = {id, name, command, installed:bool, has_bypass:bool, has_resume:bool}
+AgentUsageReport = {id, name,
+             status:"ok"|"not_installed"|"not_signed_in"|"expired"|"unavailable"|"error",
+             plan?, account?, windows:[UsageWindow], note?, updated_at?}
+UsageWindow = {label, used_percent?:number, resets_at?:int (ms), detail?}
+```
 
 ## 7. QR pairing
 
@@ -258,7 +391,8 @@ ponsel.
 1. Remote di desktop mati secara default; mematikannya menutup koneksi.
 2. Desktop mengabaikan pesan dari device yang tidak ada di daftar peer lokal
    (yang dikonfirmasi lewat SAS), apa pun yang dikatakan relay.
-3. `yolo_blocked` untuk perintah remote ke sesi full access.
+3. `yolo_blocked` untuk perintah remote ke sesi full access, dan `not_allowed`
+   untuk §6.5, selama pengaturan desktop mati.
 4. Approval remote tidak pernah membuat grant permanen.
 5. Desktop menampilkan indikator "Remote aktif" selama terhubung, dan
    mencabut peer langsung berlaku tanpa menunggu relay.
