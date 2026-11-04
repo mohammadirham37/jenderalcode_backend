@@ -158,7 +158,7 @@ Relay → klien:
 - `{"t":"revoked"}` lalu koneksi ditutup, saat device ini dicabut.
 - `{"t":"error","error":"<kode>"}` untuk auth gagal (lalu ditutup).
 
-Batas: frame ≤ 1 MiB; relay mengirim ping tiap 30 detik, batas baca 75
+Batas: frame ≤ 1 MiB (relay memutus koneksi yang mengirim frame lebih besar, jadi pengirim wajib menjaganya: desktop membalas `too_large` untuk response yang tidak muat, memendekkan string panjang di event, dan merampingkan `session.history` dengan memotong string panjang lalu membuang pesan terlama, ditandai `truncated: true`); relay mengirim ping tiap 30 detik, batas baca 75
 detik. Satu koneksi per device: koneksi baru menutup yang lama (close code
 4000). Klien melakukan reconnect dengan backoff 1 s → 30 s.
 
@@ -281,7 +281,7 @@ terminal yang dibuka dari ponsel.
 |---|---|---|
 | `session.set_policy` | `{session_id, mode:"safe"\|"balanced"\|"yolo"}` | `{session:Session}`. `yolo` butuh `full_access`. Ponsel wajib meminta konfirmasi user sebelum mengirim `yolo`. |
 | `terminal.list` | `{}` | `{terminals:[Terminal]}`. Terminal yang sedang berjalan: tab terminal dan agent CLI di desktop (`origin:"desktop"`) dan yang dibuka dari ponsel (`origin:"remote"`). |
-| `terminal.open` | `{workspace_id, cols, rows}` | `{terminal:Terminal}`. Shell baru di folder proyek (`origin:"remote"`, maks. 6 per desktop, termasuk sesi agent CLI §6.9). Tidak tampil sebagai tab di desktop. |
+| `terminal.open` | `{workspace_id, cols, rows}` | `{terminal:Terminal}`. Shell baru di folder proyek (`origin:"remote"`, maks. 6 per desktop, termasuk sesi agent CLI §6.9). Desktop juga menampilkannya sebagai tab proyek itu (PTY yang sama). Ukurannya tetap mengikuti ponsel. |
 | `terminal.attach` | `{terminal_id}` | `{terminal:Terminal, scrollback:string}`. Output terakhir (≤ 128 KiB), lalu event `terminal.data`/`terminal.exit`/`terminal.resized` mulai dikirim. |
 | `terminal.detach` | `{terminal_id}` | `{}` |
 | `terminal.input` | `{terminal_id, data}` | `{}`. Teks yang diketik (≤ 64 KiB), termasuk escape sequence tombol. |
@@ -295,6 +295,11 @@ response attach boleh dibuang karena isinya sudah ada di `scrollback`.
 Koneksi baru mulai tanpa attach. Saat ponsel offline, attach-nya dilepas,
 tetapi terminal `origin:"remote"` tetap berjalan sampai ditutup atau desktop
 keluar, sehingga bisa di-attach lagi.
+
+Terminal `origin:"remote"` tampil di desktop sebagai tab proyeknya. Input dan
+output tab itu sama dengan yang terlihat di ponsel. Tab desktop memakai ukuran
+ponsel dan tidak me-resize PTY. Menutup tab di desktop mengakhiri terminal,
+lalu ponsel menerima `terminal.exit`.
 
 ### 6.6 Chat lengkap (seperti Chat layout desktop)
 
@@ -314,8 +319,8 @@ keluar, sehingga bisa di-attach lagi.
 
 `chat.send` menerima field tambahan opsional: `attachments:[path]` (path relatif
 dari `fs.find`, maks. 20) dan `images:[{mime, data}]` (base64 tanpa prefix
-`data:`, png/jpeg/gif/webp, sisi terpanjang ≤ 1568 px, maks. 4, total ≤ 6 MB
-sebelum enkripsi). Aturan vision dan ukuran sama dengan desktop. Pesan dengan
+`data:`, png/jpeg/gif/webp, sisi terpanjang ≤ 1568 px, maks. 4, total base64 ≤ 680 KB
+supaya pesan terenkripsi tetap di bawah batas frame 1 MiB). Aturan vision dan ukuran sama dengan desktop. Pesan dengan
 lampiran tidak bisa dipakai untuk `chat.steer`.
 
 ### 6.7 Files dan Editor
@@ -327,8 +332,8 @@ dibaca.
 | Method | Params | Result |
 |---|---|---|
 | `fs.list` | `{workspace_id, path, show_hidden?:bool}` | `{entries:[FileEntry]}`. `path:""` = root. |
-| `fs.read` | `{workspace_id, path}` | `{path, content, size}`. File > 1 MiB atau biner → `bad_request`. |
-| `fs.write` | `{workspace_id, path, content}` | `{}`. Butuh `edit`. Konten ≤ 1 MiB. |
+| `fs.read` | `{workspace_id, path}` | `{path, content, size}`. File > 512 KiB atau biner → `bad_request`. |
+| `fs.write` | `{workspace_id, path, content}` | `{}`. Butuh `edit`. Konten ≤ 512 KiB. |
 | `fs.create` | `{workspace_id, path, is_dir:bool}` | `{}`. Butuh `edit`. |
 | `fs.delete` | `{workspace_id, path}` | `{}`. Butuh `edit`. |
 | `fs.rename` | `{workspace_id, from, to}` | `{}`. Butuh `edit`. |
@@ -340,7 +345,7 @@ Semua method git memakai repo di root proyek; bukan repo → `bad_request`.
 | Method | Params | Result |
 |---|---|---|
 | `git.status` | `{workspace_id}` | `{branch:string\|null, files:[FileStatus]}` |
-| `git.diff` | `{workspace_id, path?, staged?:bool}` | `{diff}`. Unified diff (≤ 1 MiB, dipotong bila lebih). |
+| `git.diff` | `{workspace_id, path?, staged?:bool}` | `{diff}`. Unified diff (≤ 512 KiB, dipotong bila lebih). |
 | `git.diff_head` | `{workspace_id, path?}` | `{diff}`. Semua perubahan terhadap HEAD (panel Changes). |
 | `git.log` | `{workspace_id, limit?}` | `{commits:[Commit]}` (default 20, maks. 100) |
 | `git.branches` | `{workspace_id}` | `{branches:[{name, current}]}` |

@@ -299,6 +299,11 @@ func (h *Hub) readLoop(c *client) {
 	for {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
+			// Why the connection ended (e.g. a frame over MaxFrameBytes, a
+			// missed ping) unless the client simply closed it.
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				h.log.Info("ws read ended", "device_id", c.deviceID, "err", err.Error())
+			}
 			return
 		}
 		extend()
