@@ -1,0 +1,50 @@
+[Unit]
+Description=JenderalCode remote relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/jcrelay
+Environment=LISTEN_ADDR=127.0.0.1:8080
+Environment=DB_PATH=/var/lib/jcrelay/relay.db
+Environment=TRUST_PROXY=1
+# Put GOOGLE_CLIENT_ID=<google-web-client-id> in this file (mode 0600, root-owned).
+EnvironmentFile=/etc/jcrelay/jcrelay.env
+Restart=on-failure
+RestartSec=2s
+
+# Hardening
+DynamicUser=yes
+StateDirectory=jcrelay
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

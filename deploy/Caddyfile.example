@@ -1,0 +1,30 @@
+# Caddy terminates TLS (automatic HTTPS) and proxies to the relay on loopback.
+# Caddy's reverse_proxy handles WebSocket upgrades (/v1/ws, /v1/pairings/*/wait)
+# without extra configuration and sets X-Forwarded-For (TRUST_PROXY=1).
+<relay-domain> {
+	encode zstd gzip
+
+	# Only the relay's own paths are exposed.
+	@relay path /v1/* /healthz
+	handle @relay {
+		reverse_proxy 127.0.0.1:8080 {
+			# Keep long-lived WebSockets open across Caddy config reloads.
+			# Needs Caddy >= 2.7; delete this line for older packages (Ubuntu ships 2.6).
+			stream_close_delay 5m
+		}
+	}
+	handle {
+		respond 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	log {
+		# Access logs contain paths and IPs only; tokens never appear in URLs.
+		output file /var/log/caddy/jcrelay-access.log
+	}
+}
