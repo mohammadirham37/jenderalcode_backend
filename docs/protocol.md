@@ -315,6 +315,7 @@ lalu ponsel menerima `terminal.exit`.
 | `skills.list` | `{workspace_id}` | `{skills:[{name, description, project:bool}]}`. Untuk menu `/`; kirim `/nama permintaan` lewat `chat.send`. |
 | `fs.find` | `{workspace_id, query}` | `{paths:[string]}` (maks. 30). Untuk `@` mention. |
 | `checkpoints.list` | `{session_id}` | `{checkpoints:[Checkpoint]}` |
+| `chat.enhance` | `{session_id, content}` | `{text}`. "Enhance prompt": model sesi menulis ulang draf menjadi prompt yang lebih jelas dan lengkap (bahasa sama, tanpa menambah fakta). Tidak mengirim atau menyimpan pesan; hanya pemakaian token yang dicatat. Gagal → `enhance_failed`. |
 | `checkpoints.restore` | `{session_id}` | `{restored:int}`. Butuh `edit`. |
 
 `chat.send` menerima field tambahan opsional: `attachments:[path]` (path relatif
