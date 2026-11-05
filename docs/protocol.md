@@ -271,7 +271,7 @@ apa adanya di v1.
 
 Desktop punya pengaturan **Allow Full access & terminal from phone**
 (`remote_allow_full_access`, default mati). Nilainya dilaporkan sebagai
-`capabilities` (`full_access`, `terminal` dan `edit` semuanya mengikuti pengaturan itu)
+`capabilities` (`full_access`, `terminal`, `edit` dan `browser` semuanya mengikuti pengaturan itu)
 di `hello` dan lewat event `capabilities`. Bila mati, semua method di bawah
 (kecuali `session.set_policy` ke `safe`/`balanced`) ditolak dengan
 `not_allowed`. Mematikannya juga melepas semua attach terminal dan menutup
@@ -380,6 +380,27 @@ AgentUsageReport = {id, name,
              plan?, account?, windows:[UsageWindow], note?, updated_at?}
 UsageWindow = {label, used_percent?:number, resets_at?:int (ms), detail?}
 ```
+
+### 6.10 Browser (server dev di komputer)
+
+Ponsel menampilkan halaman dari server dev di komputer (mis. `localhost:5173`)
+lewat kanal terenkripsi. Ponsel menjalankan proxy HTTP lokal di `127.0.0.1`.
+Proxy itu memakai nomor port yang sama dengan target bila bisa, supaya URL
+absolut `http://localhost:<port>/…` di halaman ikut lewat proxy. WebView
+membuka proxy itu, dan setiap request diteruskan sebagai `http.request`.
+Desktop mengambilnya dari loopback lalu mengembalikan response. Semuanya butuh
+`capabilities.browser` (mengikuti pengaturan yang sama dengan `full_access`);
+tanpa itu → `not_allowed`.
+
+| Method | Params | Result |
+|---|---|---|
+| `browser.targets` | `{}` | `{targets:[{url}]}`. Halaman localhost yang sedang terbuka di preview browser desktop (saran alamat). |
+| `http.request` | `{url, method?, headers?:[[name, value]], body?:b64}` | `{status, headers:[[name, value]], size, body:b64, stream_id?}`. `url` wajib http(s) dengan host loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`); host lain → `not_allowed`. Redirect tidak diikuti (3xx dikembalikan apa adanya). Body request ≤ 384 KiB, response ≤ 64 MiB. Server tidak berjalan → `unreachable`. |
+| `http.read` | `{stream_id}` | `{body:b64, done:bool}`. Potongan berikutnya (≤ 384 KiB) dari response yang lebih besar dari satu potongan. Disimpan 120 detik sejak dibaca terakhir. |
+
+Desktop meminta body tanpa kompresi (`Accept-Encoding: identity`) dan membuang
+header per-hop (`connection`, `transfer-encoding`, `content-length`, `host`, …).
+WebSocket (HMR) belum diteruskan: halaman dimuat ulang secara manual.
 
 ## 7. QR pairing
 
